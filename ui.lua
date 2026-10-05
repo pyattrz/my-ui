@@ -300,12 +300,8 @@ local connection9 = UserInputService.InputEnded:Connect(function(input2, gamePro
 end)
 
 UIScale.Scale = 1
-local changedSignal = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize")
-
-local connection10 = changedSignal:Connect(function()
-	-- Responsive sizing is handled by each Window after it is created.
-	-- Do not force-reset the window position here; that used to fight dragging.
-end)
+-- Window viewport handling is installed inside Window(), after Frame79 exists.
+local connection10 = { Disconnect = function() end }
 
 local Frame4 = Instance.new("Frame")
 Frame4.Visible = false
@@ -3118,158 +3114,149 @@ getgenv().Arcane = {
 
 		setupImageLabel(ImageLabel8, "rbxassetid://0")
 
-		-- ============================================================
-		-- RESPONSIVE / MOBILE / DRAG / LOW-OVERHEAD UI PATCH
-		-- ============================================================
-		-- Uses the same image as the window logo. If your logo is set
-		-- later by the UI, the mobile button mirrors it automatically.
-		local Camera = workspace.CurrentCamera
-		local isTouch = UserInputService.TouchEnabled
-		local isKeyboard = UserInputService.KeyboardEnabled
+		-- Responsive + input patch. Kept local to this Window so no nil Frame79 references occur.
+		local ResponsiveScale = Instance.new("UIScale")
+		ResponsiveScale.Name = "ResponsiveScale"
+		ResponsiveScale.Scale = 1
+		ResponsiveScale.Parent = Frame79
 
-		-- Scale only this main window so phone/tablet/PC remain usable.
-		local mainScale = Frame79:FindFirstChild("ResponsiveScale") or Instance.new("UIScale")
-		mainScale.Name = "ResponsiveScale"
-		mainScale.Parent = Frame79
+		local function getViewport()
+			local camera = workspace.CurrentCamera
+			return camera and camera.ViewportSize or Vector2.new(1280, 720)
+		end
 
 		local function updateResponsiveScale()
-			local vp = Camera and Camera.ViewportSize or Vector2.new(1280, 720)
-			local shortest = math.min(vp.X, vp.Y)
-			local scale
+			local viewport = getViewport()
+			local shortest = math.min(viewport.X, viewport.Y)
+
 			if shortest <= 500 then
-				scale = 0.68 -- phones
+				ResponsiveScale.Scale = 0.68
 			elseif shortest <= 800 then
-				scale = 0.82 -- tablets / small screens
-			elseif vp.X <= 1366 then
-				scale = 0.92 -- laptops / smaller PC screens
+				ResponsiveScale.Scale = 0.82
+			elseif viewport.X <= 1366 then
+				ResponsiveScale.Scale = 0.92
 			else
-				scale = 1.00 -- desktop
+				ResponsiveScale.Scale = 1
 			end
-			mainScale.Scale = scale
-		end
-		updateResponsiveScale()
-
-		-- Keep the UI inside the usable viewport after resize/orientation changes.
-		local function clampMainToViewport()
-			if not Camera then return end
-			local vp = Camera.ViewportSize
-			local abs = Frame79.AbsoluteSize
-			local p = Frame79.AbsolutePosition
-			local x = math.clamp(p.X, 0, math.max(0, vp.X - abs.X))
-			local y = math.clamp(p.Y, 0, math.max(0, vp.Y - abs.Y))
-			Frame79.Position = UDim2.fromOffset(x, y)
 		end
 
-		-- Smooth unrestricted header dragging. No artificial left/right/down lock.
+		-- Keep at least the header reachable, but allow the window to move farther
+		-- toward every side instead of feeling locked at the screen edge.
+		local function clampReachable(position)
+			local viewport = getViewport()
+			local scale = ResponsiveScale.Scale
+			local width = 560 * scale
+			local height = 570 * scale
+			local visibleHandle = 70
+
+			local minX = -width + visibleHandle
+			local maxX = viewport.X - visibleHandle
+			local minY = 0
+			local maxY = math.max(0, viewport.Y - math.min(37 * scale, height))
+
+			return UDim2.fromOffset(
+				math.clamp(position.X.Offset, minX, maxX),
+				math.clamp(position.Y.Offset, minY, maxY)
+			)
+		end
+
 		local dragging = false
-		local dragInput
-		local dragStart
-		local startPos
+		local dragInput = nil
+		local dragStart = nil
+		local startPosition = nil
 
 		Frame80.Active = true
+
 		Frame80.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1
 				or input.UserInputType == Enum.UserInputType.Touch then
 				dragging = true
 				dragStart = input.Position
-				startPos = Frame79.Position
+				startPosition = Frame79.Position
 				dragInput = input
 			end
 		end)
 
 		UserInputService.InputChanged:Connect(function(input)
-			if not dragging or not dragStart or not startPos then return end
-			if input.UserInputType ~= Enum.UserInputType.MouseMovement
-				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			if not dragging or not dragStart or not startPosition then
+				return
+			end
 
-			local delta = input.Position - dragStart
-			local vp = Camera.ViewportSize
-			local abs = Frame79.AbsoluteSize
-			local nx = math.clamp(startPos.X.Offset + delta.X, 0, math.max(0, vp.X - abs.X))
-			local ny = math.clamp(startPos.Y.Offset + delta.Y, 0, math.max(0, vp.Y - abs.Y))
-			Frame79.Position = UDim2.fromOffset(nx, ny)
+			if input.UserInputType == Enum.UserInputType.MouseMovement
+				or input.UserInputType == Enum.UserInputType.Touch then
+				local delta = input.Position - dragStart
+				local nextPosition = UDim2.fromOffset(
+					startPosition.X.Offset + delta.X,
+					startPosition.Y.Offset + delta.Y
+				)
+				Frame79.Position = clampReachable(nextPosition)
+			end
 		end)
 
 		UserInputService.InputEnded:Connect(function(input)
-			if input == dragInput
+			if dragging and (
+				input == dragInput
 				or input.UserInputType == Enum.UserInputType.MouseButton1
-				or input.UserInputType == Enum.UserInputType.Touch then
+				or input.UserInputType == Enum.UserInputType.Touch
+			) then
 				dragging = false
 				dragInput = nil
-				clampMainToViewport()
+				dragStart = nil
+				startPosition = nil
 			end
 		end)
 
-		-- G toggles the UI for PC/keyboard users.
-		UserInputService.InputBegan:Connect(function(input, processed)
-			if processed then return end
-			if isKeyboard and input.KeyCode == Enum.KeyCode.G then
+		-- G opens/closes the UI for keyboard users.
+		UserInputService.InputBegan:Connect(function(input, gameProcessed)
+			if gameProcessed then
+				return
+			end
+			if input.KeyCode == Enum.KeyCode.G then
 				Frame79.Visible = not Frame79.Visible
 			end
 		end)
 
-		-- Mobile-only logo button for open/close.
-		local MobileToggle
-		if isTouch then
-			MobileToggle = Instance.new("ImageButton")
-			MobileToggle.Name = "MobileLogoToggle"
-			MobileToggle.Parent = ScreenGui2
-			MobileToggle.Size = UDim2.fromOffset(48, 48)
-			MobileToggle.Position = UDim2.new(0, 12, 0.5, -24)
-			MobileToggle.BackgroundTransparency = 1
-			MobileToggle.AutoButtonColor = true
-			MobileToggle.ZIndex = 9999
-			MobileToggle.Image = ImageLabel8.Image
+		-- Phone/tablet logo button. It mirrors the window logo automatically.
+		local MobileLogoToggle = Instance.new("ImageButton")
+		MobileLogoToggle.Name = "MobileLogoToggle"
+		MobileLogoToggle.AnchorPoint = Vector2.new(0, 0.5)
+		MobileLogoToggle.Position = UDim2.new(0, 10, 0.5, 0)
+		MobileLogoToggle.Size = UDim2.fromOffset(48, 48)
+		MobileLogoToggle.BackgroundTransparency = 1
+		MobileLogoToggle.BorderSizePixel = 0
+		MobileLogoToggle.Image = ImageLabel8.Image
+		MobileLogoToggle.Visible = UserInputService.TouchEnabled
+		MobileLogoToggle.ZIndex = 100
+		MobileLogoToggle.Parent = ScreenGui2
 
-			local mobileCorner = Instance.new("UICorner")
-			mobileCorner.CornerRadius = UDim.new(1, 0)
-			mobileCorner.Parent = MobileToggle
+		ImageLabel8:GetPropertyChangedSignal("Image"):Connect(function()
+			MobileLogoToggle.Image = ImageLabel8.Image
+		end)
 
-			-- Mirror logo changes automatically.
-			ImageLabel8:GetPropertyChangedSignal("Image"):Connect(function()
-				if MobileToggle then
-					MobileToggle.Image = ImageLabel8.Image
-				end
-			end)
+		MobileLogoToggle.Activated:Connect(function()
+			Frame79.Visible = not Frame79.Visible
+		end)
 
-			MobileToggle.Activated:Connect(function()
-				Frame79.Visible = not Frame79.Visible
-			end)
+		local function centerWindow()
+			local viewport = getViewport()
+			local scale = ResponsiveScale.Scale
+			Frame79.Position = UDim2.fromOffset(
+				math.floor((viewport.X - (560 * scale)) / 2),
+				math.floor((viewport.Y - (570 * scale)) / 2)
+			)
+			Frame79.Position = clampReachable(Frame79.Position)
 		end
 
-		-- One lightweight 1-second refresh pulse for dynamic UI.
-		-- This avoids separate fast loops for every label/dropdown.
-		local RefreshPulse = Instance.new("BindableEvent")
-		RefreshPulse.Name = "UIRefreshPulse"
-		RefreshPulse.Parent = ScreenGui2
-		getgenv().ArcaneUIRefreshPulse = RefreshPulse.Event
+		updateResponsiveScale()
+		task.defer(centerWindow)
 
-		task.spawn(function()
-			while ScreenGui2.Parent do
-				task.wait(1)
-				RefreshPulse:Fire()
-			end
-		end)
-
-		Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-			task.defer(function()
+		local camera = workspace.CurrentCamera
+		if camera then
+			camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 				updateResponsiveScale()
-				clampMainToViewport()
+				Frame79.Position = clampReachable(Frame79.Position)
 			end)
-		end)
-
-		task.defer(function()
-			-- Start centered instead of off-screen.
-			if Camera then
-				local vp = Camera.ViewportSize
-				local abs = Frame79.AbsoluteSize
-				Frame79.Position = UDim2.fromOffset(
-					math.max(0, (vp.X - abs.X) / 2),
-					math.max(0, (vp.Y - abs.Y) / 2)
-				)
-			end
-		end)
-		-- ============================================================
+		end
 
 		local TextLabel36 = createTextLabel8(arg169, Frame80, arg197, 46, 0, 16, 0, 200, 1, 0)
 		TextLabel36.TextColor3 = arg169
@@ -4206,3 +4193,5 @@ getgenv().Arcane = {
 	end
 }
 
+-- Return the library for loaders that execute this file with loadstring(source)().
+return getgenv().Arcane
