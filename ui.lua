@@ -4051,4 +4051,3 @@ getgenv().Arcane = {
 		setupFrame(UserInputService)
 	end
 }
-
