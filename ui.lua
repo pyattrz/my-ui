@@ -33,12 +33,13 @@ local GuiService = game:GetService("GuiService")
 local CoreGui = game:GetService("CoreGui")
 Players.LocalPlayer:GetMouse()
 local guiInset = GuiService:GetGuiInset()
-local response = game:HttpGet("https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/icons.lua")
-loadstring(response)()
+-- Removed unused Rayfield icons.lua nested loadstring.
+-- It was the 2436-byte chunk shown in the executor error and could compile to nil/fail.
+local response = nil
 -- isfolder("Arcane") -> false
-makefolder("Arcane")
+if type(makefolder) == "function" and (type(isfolder) ~= "function" or not isfolder("Arcane")) then pcall(makefolder, "Arcane") end
 -- isfolder("Arcane/Configs") -> false
-makefolder("Arcane/Configs")
+if type(makefolder) == "function" and (type(isfolder) ~= "function" or not isfolder("Arcane/Configs")) then pcall(makefolder, "Arcane/Configs") end
 
 local connection7 = RunService.Heartbeat:Connect(function(deltaTime)
 	Frame4.BackgroundColor3 = arg165
@@ -231,7 +232,7 @@ end)
 
 -- isfile("ArcaneInter.ttf") -> false
 local response2 = game:HttpGet("https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/InterSemibold.ttf")
-writefile("ArcaneInter.ttf", response2)
+if type(writefile) == "function" then pcall(writefile, "ArcaneInter.ttf", response2) end
 
 -- isfile("ArcaneInter.font") -> false
 local json = HttpService:JSONEncode({
